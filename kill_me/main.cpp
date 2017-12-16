@@ -3,207 +3,173 @@
 #include <list>
 #include <chrono>
 #include <thread>
+#include <vector>
 
-#include <portaudio.h>
+#include <glad\glad.h>
+#include <GLFW\glfw3.h>
+#include "imgui\imgui.h"
+#include "imgui\imgui_impl_glfw_gl3.h"
 
-#pragma comment(lib, "C:/libs/portaudio/build/msvc/x64/Debug/portaudio_x64.lib")
+#pragma comment(lib, "C:\\libs\\glfw-3.2.1.bin.WIN64\\lib-vc2015\\glfw3.lib")
 
-#define SAMPLERATE	44100
-#define PI			3.14159265
-#define PI2			6.2831853
+#include "types.hpp"
+#include "osc.hpp"
+#include "audio_unit.hpp"
+#include "audio_renderer.hpp"
 
-struct MIDIEvent
+using namespace chroma;
+
+enum class EnvState { Attack, Decay, Sustain, Release };
+struct Envelope
 {
-	char data[4];
-	unsigned long timestamp;
-};
-
-struct Param
-{
-	char name[16];
-	float value;
-};
-
-struct Sample
-{
-	float l;
+	float a;
+	float d;
+	float s;
 	float r;
-};
 
-struct AudioUnit
-{
-	char name[32];
-	std::list<Param> params;
+	const float a_base = 0.3f;
+	const float d_min = 0.3f;
+	const float s_min = 0.3f;
+	const float r_min = 0.3f;
 
-	AudioUnit(const char* _name) { memcpy(name, _name, strlen(_name)); }
+	EnvState state;
+	size_t time = 0;
+	float v = 0;
 
-	virtual void process(Sample* input, Sample* output, size_t sample_count) = 0;
-
-protected:
-	void add_param(char* name, float value)
+	float get()
 	{
-		Param p;
-
-		memcpy(p.name, name, strlen(name));
-		p.value = value;
-
-		params.push_back(p);
-	}
-};
-
-enum class OscType { Sine, Saw, Square, Triangle };
-struct Osc
-{
-	OscType type;
-	float phase = 0;
-
-	float step(float amp, float freq)
-	{
-		float v = 0;
-
-		switch (type)
+		switch (state)
 		{
-		case OscType::Sine:
+		case EnvState::Attack:
 		{
-			v = amp * std::sin(phase);
+			//if (v >= 1.0f)
+			//	state = EnvState::Decay;
 		} break;
-
-		case OscType::Saw:
+		case EnvState::Decay:
 		{
-			v = amp - (amp / PI * phase);
+			if (v >= 1.0f)
+				state = EnvState::Sustain;
 		} break;
-
-		case OscType::Square:
+		case EnvState::Sustain:
 		{
-			if (phase < PI)
-				v = amp;
-			else
-				v = -amp;
+			if (v >= 1.0f)
+				state = EnvState::Release;
 		} break;
-
-		case OscType::Triangle:
+		case EnvState::Release:
 		{
-			if (phase < PI)
-				v = -amp + (2 * amp / PI) * phase;
-			else
-				v = amp - (2 * amp / PI) * phase;
 		} break;
 		}
 
-		phase = phase + ((PI2 * freq) / SAMPLERATE);
-
-		if (phase > (PI2))
-			phase = phase - (PI2);
+		time++;
 
 		return v;
+	}
+
+private:
+	void restart() 
+	{ 
+		time = 0;
+		state = EnvState::Attack;
+		v = a;
+	}
+
+	float calc_coef(float rate, float target_ratio)
+	{
+		if (rate <= 0.0)
+			return 0.0f;
+
+		return std::exp(-log((1.0f + target_ratio) / target_ratio) / rate);
+	}
+};
+
+struct Filter
+{
+	float tap[8];
+
+	float get(float input, float cutoff, float res)
+	{
+		return 0;
 	}
 };
 
 struct BitchFace : public AudioUnit
 {
 	Osc oscs[3];
+	Osc lfo = { OscType::Sine };
+	Envelope env = { 0.0f, 1.0f, 1.0f, 0.0f };
+	Filter filter;
 
 	BitchFace() : AudioUnit("BitchFace")
 	{
-
+		oscs[0].type = OscType::Saw;
+		oscs[1].type = OscType::Saw;
 	}
 
 	void process(Sample* input, Sample* output, size_t sample_count) override
 	{
 		for (int i = 0; i < sample_count; i++)
 		{
-			output[i].l = oscs[0].step(0.9f, 440.0f);
+			auto amp = env.get();
+
+			auto o1 = oscs[0].step(amp, 220.0f / 3);
+			auto o2 = oscs[1].step(amp, 219.0f / 3);
+
+			auto mix = MIX2(o1, o2);
+
+			output[i].l = mix;
+			output[i].r = mix;
 		}
-	}
-};
-
-struct TimeMachine : public AudioUnit
-{
-	TimeMachine() : AudioUnit("TimeMachine")
-	{
-	}
-};
-
-struct Channel
-{
-	AudioUnit* inst = nullptr;
-	std::list<AudioUnit*> effects;
-
-	float vol = 1.0f;
-	float pan = 0.0f;
-
-	void process(Sample* samples, size_t sample_count)
-	{
-		inst->process(nullptr, samples, sample_count);
-
-		for (auto& fx : effects)
-			fx->process(samples, samples, sample_count);
-	}
-};
-
-struct AudioRenderer;
-static int audio_callback(
-	const void* input_buffer,
-	void* output_buffer,
-	unsigned long frame_count,
-	const PaStreamCallbackTimeInfo* time_info,
-	PaStreamCallbackFlags status_flags,
-	void* user_data
-)
-{
-	auto renderer = reinterpret_cast<AudioRenderer*>(user_data);
-	auto sample = reinterpret_cast<Sample*>(output_buffer);
-
-	for (int i = 0; i < frame_count; i++)
-	{
-	}
-
-	return 0;
-}
-
-struct AudioRenderer
-{
-	std::list<Channel> channels;
-
-	PaStream* stream = nullptr;
-
-	AudioRenderer()
-	{
-		Pa_Initialize();
-		Pa_OpenDefaultStream(
-			&stream,
-			0,
-			2,
-			paFloat32,
-			SAMPLERATE,
-			512,
-			audio_callback,
-			reinterpret_cast<void*>(this));
-	}
-
-	~AudioRenderer()
-	{
-		stop();
-		Pa_Terminate();
-	}
-
-	void start()
-	{
-		Pa_StartStream(stream);
-	}
-
-	void stop()
-	{
-		Pa_StopStream(stream);
 	}
 };
 
 int main(int, char**)
 {
-	while (true)
+	GLFWwindow* window = nullptr;
+
+	glfwInit();
+
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+	window = glfwCreateWindow(1280, 720, "kill_me", nullptr, nullptr);
+
+	glfwMakeContextCurrent(window);
+	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+	glfwSwapInterval(1);
+
+	ImGui_ImplGlfwGL3_Init(window, true);
+
+	AudioRenderer<44100, 512> renderer;
+	renderer.add_channel(Channel().set_inst(new BitchFace));
+	renderer.start();
+	
+	while (!glfwWindowShouldClose(window))
 	{
+		glfwPollEvents();
+		ImGui_ImplGlfwGL3_NewFrame();
+
+		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+			glfwSetWindowShouldClose(window, GLFW_TRUE);
+
+		ImGui::Begin("fuck");
+		ImGui::Text("%f", reinterpret_cast<BitchFace*>(renderer.channels.front().inst)->env.v);
+		ImGui::End();
+
+		// Rendering
+		int display_w, display_h;
+		glfwGetFramebufferSize(window, &display_w, &display_h);
+		glViewport(0, 0, display_w, display_h);
+		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+		ImGui::Render();
+		glfwSwapBuffers(window);
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
+
+	renderer.stop();
+
+	ImGui_ImplGlfwGL3_Shutdown();
+	glfwDestroyWindow(window);
+	glfwTerminate();
 
 	return 0;
 }

@@ -40,4 +40,10 @@ namespace chroma
 
 	public:
 	};
+
+	struct Sample
+	{
+		float l;
+		float r;
+	};
 }
