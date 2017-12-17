@@ -89,5 +89,8 @@
     <ClInclude Include="envelope.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="bitchface.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

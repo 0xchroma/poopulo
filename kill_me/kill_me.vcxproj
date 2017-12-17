@@ -122,6 +122,7 @@
   <ItemGroup>
     <ClInclude Include="audio_renderer.hpp" />
     <ClInclude Include="audio_unit.hpp" />
+    <ClInclude Include="bitchface.hpp" />
     <ClInclude Include="buffer.hpp" />
     <ClInclude Include="channel.hpp" />
     <ClInclude Include="envelope.hpp" />

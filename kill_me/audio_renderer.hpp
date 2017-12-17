@@ -17,6 +17,7 @@ namespace chroma
 		struct AudioRenderer
 		{
 			PaStream* stream = nullptr;
+			size_t bpm = 120;
 			std::list<Channel> channels;
 
 			AudioRenderer()
