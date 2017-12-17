@@ -3,47 +3,48 @@
 template<typename T>
 struct vector;
 
+template<typename T>
+struct list;
+
 namespace chroma
 {
-	struct Param
+	namespace audio
 	{
-		char name[16];
-		float value;
-	};
-
-	struct AudioUnit
-	{
-		char name[32];
-		std::list<Param> param;
-
-		AudioUnit(const char* _name) { memcpy(name, _name, strlen(_name)); }
-		virtual ~AudioUnit() { }
-
-		virtual void process(Sample* input, Sample* output, size_t sample_count) = 0;
-
-		AudioUnit* load(const std::vector<char>& data)
+		float note2freq(const Note& note)
 		{
-			for (int i = 0; i < data.size(); i += sizeof(Param))
-				param.push_back(*reinterpret_cast<const Param*>(data.data() + i));
-
-			return this;
+			return 440.0 * pow(2.0, (static_cast<char>(note) - 69.0) / 12.0);
 		}
 
-		void save(std::vector<char>& data)
+		struct Param
 		{
-			for (auto& p : param)
-				data.insert(data.end(), reinterpret_cast<char*>(&p), reinterpret_cast<char*>(&p + sizeof(Param)));
-		}
+			char name[8];
+			float value;
+		};
 
-	protected:
-		void add_param(char* name, float value)
+		struct AudioUnit
 		{
-			Param p;
+			char name[32];
+			std::list<Param> param;
 
-			memcpy(p.name, name, strlen(name));
-			p.value = value;
+			AudioUnit(const char* _name) { memcpy(name, _name, strlen(_name)); name[strlen(_name)] = '\0'; }
+			virtual ~AudioUnit() { }
 
-			param.push_back(p);
-		}
-	};
+			virtual void process(Sample* input, Sample* output, size_t sample_count) = 0;
+
+			virtual void gui() { }
+			virtual void note_on(const Note& note) { }
+			virtual void note_off(const Note& note) { }
+
+		protected:
+			void add_param(char* name, float value)
+			{
+				Param p;
+
+				memcpy(p.name, name, strlen(name));
+				p.value = value;
+
+				param.push_back(p);
+			}
+		};
+	}
 }

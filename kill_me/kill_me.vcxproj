@@ -124,6 +124,7 @@
     <ClInclude Include="audio_unit.hpp" />
     <ClInclude Include="buffer.hpp" />
     <ClInclude Include="channel.hpp" />
+    <ClInclude Include="envelope.hpp" />
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_impl_glfw_gl3.h" />
@@ -132,6 +133,7 @@
     <ClInclude Include="imgui\stb_textedit.h" />
     <ClInclude Include="imgui\stb_truetype.h" />
     <ClInclude Include="linked_list.hpp" />
+    <ClInclude Include="math.hpp" />
     <ClInclude Include="osc.hpp" />
     <ClInclude Include="string.hpp" />
     <ClInclude Include="types.hpp" />

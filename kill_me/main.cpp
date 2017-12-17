@@ -4,6 +4,12 @@
 #include <chrono>
 #include <thread>
 #include <vector>
+#include <queue>
+#include <mutex>
+
+#include <Windows.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
 
 #include <glad\glad.h>
 #include <GLFW\glfw3.h>
@@ -13,114 +19,106 @@
 #pragma comment(lib, "C:\\libs\\glfw-3.2.1.bin.WIN64\\lib-vc2015\\glfw3.lib")
 
 #include "types.hpp"
+#include "math.hpp"
 #include "osc.hpp"
 #include "audio_unit.hpp"
 #include "audio_renderer.hpp"
+#include "envelope.hpp"
 
 using namespace chroma;
-
-enum class EnvState { Attack, Decay, Sustain, Release };
-struct Envelope
-{
-	float a;
-	float d;
-	float s;
-	float r;
-
-	const float a_base = 0.3f;
-	const float d_min = 0.3f;
-	const float s_min = 0.3f;
-	const float r_min = 0.3f;
-
-	EnvState state;
-	size_t time = 0;
-	float v = 0;
-
-	float get()
-	{
-		switch (state)
-		{
-		case EnvState::Attack:
-		{
-			//if (v >= 1.0f)
-			//	state = EnvState::Decay;
-		} break;
-		case EnvState::Decay:
-		{
-			if (v >= 1.0f)
-				state = EnvState::Sustain;
-		} break;
-		case EnvState::Sustain:
-		{
-			if (v >= 1.0f)
-				state = EnvState::Release;
-		} break;
-		case EnvState::Release:
-		{
-		} break;
-		}
-
-		time++;
-
-		return v;
-	}
-
-private:
-	void restart() 
-	{ 
-		time = 0;
-		state = EnvState::Attack;
-		v = a;
-	}
-
-	float calc_coef(float rate, float target_ratio)
-	{
-		if (rate <= 0.0)
-			return 0.0f;
-
-		return std::exp(-log((1.0f + target_ratio) / target_ratio) / rate);
-	}
-};
-
-struct Filter
-{
-	float tap[8];
-
-	float get(float input, float cutoff, float res)
-	{
-		return 0;
-	}
-};
+using namespace audio;
 
 struct BitchFace : public AudioUnit
 {
 	Osc oscs[3];
-	Osc lfo = { OscType::Sine };
-	Envelope env = { 0.0f, 1.0f, 1.0f, 0.0f };
-	Filter filter;
+	Envelope env = { 0.5f, 0.5f, 0.5f, 0.5f };
+
+	std::vector<Note> active_notes;
 
 	BitchFace() : AudioUnit("BitchFace")
 	{
 		oscs[0].type = OscType::Saw;
-		oscs[1].type = OscType::Saw;
 	}
 
 	void process(Sample* input, Sample* output, size_t sample_count) override
 	{
+		const auto notes = active_notes;
+
 		for (int i = 0; i < sample_count; i++)
 		{
-			auto amp = env.get();
+			float signal = 0;
 
-			auto o1 = oscs[0].step(amp, 220.0f / 3);
-			auto o2 = oscs[1].step(amp, 219.0f / 3);
+			if (notes.size() > 0)
+			{
+				float note_freq = note2freq(notes[0]);
+				signal = oscs[0].step(1.0f, note_freq);
+			}
+			else
+			{
+				env.restart();
+			}
 
-			auto mix = MIX2(o1, o2);
-
-			output[i].l = mix;
-			output[i].r = mix;
+			output[i].l = output[i].r = signal;
 		}
 	}
+
+	void note_on(const Note& note) override
+	{
+		active_notes.push_back(note);
+	}
+
+	void note_off(const Note& note) override
+	{
+		for (auto iter = active_notes.begin(); iter != active_notes.end(); iter++)
+		{
+			if (*iter == note)
+			{
+				active_notes.erase(iter);
+				break;
+			}
+		}
+	}
+
+#if _DEBUG
+	void gui() override
+	{
+		ImGui::SliderFloat4("adsr", (float*)&env, 0, 1.0f);
+	}
+#endif
 };
+
+AudioRenderer<44100, 512> renderer;
+
+void CALLBACK MidiInProc(
+	HMIDIIN, 
+	UINT msg, 
+	DWORD_PTR,
+	DWORD_PTR p1, 
+	DWORD_PTR p2)
+{
+	if (msg == MIM_DATA)
+	{
+		char bytes[3] = {};
+		auto message = static_cast<DWORD>(p1);
+		
+		memcpy(bytes, &message, 3);
+
+		switch ((bytes[0] & 0xF0) >> 4)
+		{
+		case 0x08: // note off
+		{
+			renderer.channels.front().inst->note_off(static_cast<Note>(bytes[1]));
+		} break;
+		case 0x09: // note on
+		{
+			renderer.channels.front().inst->note_on(static_cast<Note>(bytes[1]));
+		} break;
+		}
+
+		std::cout << std::hex << bytes[1] << std::endl;
+		std::cout << note2freq(static_cast<Note>(bytes[1])) << std::endl;
+	}
+}
 
 int main(int, char**)
 {
@@ -138,9 +136,12 @@ int main(int, char**)
 
 	ImGui_ImplGlfwGL3_Init(window, true);
 
-	AudioRenderer<44100, 512> renderer;
 	renderer.add_channel(Channel().set_inst(new BitchFace));
 	renderer.start();
+
+	HMIDIIN midi_handle = {};
+	midiInOpen(&midi_handle, 0, reinterpret_cast<DWORD_PTR>(MidiInProc), 0, CALLBACK_FUNCTION);
+	midiInStart(midi_handle);
 	
 	while (!glfwWindowShouldClose(window))
 	{
@@ -150,21 +151,31 @@ int main(int, char**)
 		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 			glfwSetWindowShouldClose(window, GLFW_TRUE);
 
-		ImGui::Begin("fuck");
-		ImGui::Text("%f", reinterpret_cast<BitchFace*>(renderer.channels.front().inst)->env.v);
-		ImGui::End();
+		int index = 0;
+		for (auto& channel : renderer.channels)
+		{
+			std::string name = "Channel: " + index++;
+			ImGui::Begin(name.c_str());
+			ImGui::SliderFloat("Vol", &channel.vol, 0.0f, 1.0f);
+			ImGui::SliderFloat("Pan", &channel.pan, -1.0f, 1.0f);
+			ImGui::Separator();
+			ImGui::Text(channel.inst->name);
+			channel.inst->gui();
+			ImGui::End();
+		}
 
 		// Rendering
 		int display_w, display_h;
 		glfwGetFramebufferSize(window, &display_w, &display_h);
 		glViewport(0, 0, display_w, display_h);
-		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 		ImGui::Render();
 		glfwSwapBuffers(window);
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 
+	midiInStop(midi_handle);
 	renderer.stop();
 
 	ImGui_ImplGlfwGL3_Shutdown();
